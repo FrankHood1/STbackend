@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 import { BadgeRequirementType, UserRole } from '@prisma/client';
 import { BadgesService } from './badges.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -188,5 +189,7 @@ describe('BadgesService (Issue #15)', () => {
       expect(result.totalAwarded).toBe(1);
       expect(result.awarded[0].id).toBe('b3');
     });
+  });
+});
   });
 });
