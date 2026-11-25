@@ -50,7 +50,7 @@ export class SearchService {
         ],
         take: limit * 2,
       }),
-      (this.prisma as any).courseSearchTerm.findMany({
+      this.prisma.courseSearchTerm.findMany({
         where: { term: { contains: normalizedQuery, mode: 'insensitive' } },
         orderBy: [{ searchCount: 'desc' }, { updatedAt: 'desc' }],
         take: limit,
