@@ -118,8 +118,8 @@ export class SearchService {
   }
 
   private normalizeLimit(limit?: number) {
-    const numericLimit = Number(limit) || this.defaultLimit;
-    return Math.min(Math.max(Math.floor(numericLimit), 1), this.maxLimit);
+    // limit is already validated by AutocompleteQueryDto; fall back to default if absent.
+    return limit ?? this.defaultLimit;
   }
 
   private rankText(text: string, query: string, baseScore: number) {
