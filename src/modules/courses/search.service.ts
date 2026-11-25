@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { CourseStatus } from '@prisma/client';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { Prisma, CourseStatus } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 export interface CourseSearchSuggestion {
@@ -15,6 +15,7 @@ export class SearchService {
   private readonly minQueryLength = 2;
   private readonly defaultLimit = 10;
   private readonly maxLimit = 25;
+  private readonly logger = new Logger(SearchService.name);
 
   constructor(private readonly prisma: PrismaService) {}
 
@@ -42,6 +43,11 @@ export class SearchService {
           totalEnrollments: true,
           avgRating: true,
         },
+        orderBy: [
+          { totalEnrollments: 'desc' },
+          { avgRating: 'desc' },
+          { id: 'asc' },
+        ],
         take: limit * 2,
       }),
       (this.prisma as any).courseSearchTerm.findMany({
@@ -99,18 +105,40 @@ export class SearchService {
   async recordSearchTerm(term: string): Promise<void> {
     const normalizedTerm = this.normalizeQuery(term);
     if (normalizedTerm.length < this.minQueryLength) return;
-    await (this.prisma as any).courseSearchTerm.upsert({
-      where: { term: normalizedTerm },
-      create: { term: normalizedTerm, searchCount: 1 },
-      update: { searchCount: { increment: 1 }, lastSearchedAt: new Date() },
-    });
+    try {
+      await (this.prisma as any).courseSearchTerm.upsert({
+        where: { term: normalizedTerm },
+        create: { term: normalizedTerm, searchCount: 1 },
+        update: { searchCount: { increment: 1 }, lastSearchedAt: new Date() },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        this.logger.debug(`recordSearchTerm P2002 race for term "${normalizedTerm}", falling back to update`);
+        await (this.prisma as any).courseSearchTerm.update({
+          where: { term: normalizedTerm },
+          data: { searchCount: { increment: 1 }, lastSearchedAt: new Date() },
+        });
+      } else {
+        throw err;
+      }
+    }
   }
 
   private addSuggestion(suggestions: Map<string, CourseSearchSuggestion>, suggestion: CourseSearchSuggestion) {
     const key = `${suggestion.type}:${suggestion.text.toLowerCase()}`;
     const existing = suggestions.get(key);
-    if (!existing || suggestion.rank > existing.rank) {
+    if (!existing) {
       suggestions.set(key, suggestion);
+    } else {
+      // Choose canonical text deterministically (rank-independent) by picking the
+      // lexicographically earlier text, so the casing does not vary with input order (#38).
+      const canonicalText = suggestion.text < existing.text ? suggestion.text : existing.text;
+      if (suggestion.rank > existing.rank) {
+        suggestions.set(key, { ...suggestion, text: canonicalText });
+      } else if (canonicalText !== existing.text) {
+        // Rank does not change but we still adopt the canonical casing
+        suggestions.set(key, { ...existing, text: canonicalText });
+      }
     }
   }
 
@@ -127,6 +155,9 @@ export class SearchService {
     const normalizedText = text.toLowerCase();
     if (normalizedText === query) return baseScore + 100;
     if (normalizedText.startsWith(query)) return baseScore + 50;
+    // Word-boundary match: query appears at the start of any word in the text (#37)
+    const words = normalizedText.split(/[^a-z0-9]+/);
+    if (words.some(word => word.startsWith(query))) return baseScore + 25;
     return baseScore;
   }
 }
